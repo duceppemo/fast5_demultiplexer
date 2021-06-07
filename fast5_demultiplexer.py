@@ -158,7 +158,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--threads', metavar='{}'.format(cpu),
                         required=False, default=cpu,
                         type=int,
-                        help='Number of threads to use. Default max available')
+                        help='Number of threads to use. Default max available.')
 
     arguments = parser.parse_args()  # Get the arguments into an object
     Demul(arguments)
