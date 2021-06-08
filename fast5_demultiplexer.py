@@ -5,6 +5,7 @@ from multiprocessing import cpu_count
 from pathlib import Path
 import shutil
 import gzip
+# from collections import defaultdict
 # from concurrent import futures
 
 # TODO: start with the multi fast5 folder from MinKNOW. Add function to convert multi to single.
@@ -27,16 +28,31 @@ class Demul(object):
         self.run()
 
     def run(self):
-        print('Listing single fast5 files...')
+        print('Listing fast5 reads...', end="", flush=True)
         fast5_dict = Demul.get_fast5_tree(self.single_fast5_folder)
-        print('Listing demultiplexed fastq files...')
+        print(' found {}.'.format(len(fast5_dict.keys())))
+
+        print('Listing demultiplexed fastq reads...', end="", flush=True)
         fastq_dict = Demul.get_fastq_tree(self.basecalled_folder)
-        print('Reorganizing fast5 according to barcodes...')
+        n_fastq = sum([len(name_list) for status, bc_dict in fastq_dict.items() for bc, name_list in bc_dict.items()])
+        print(' found {}.'.format(n_fastq))
+
+        print('Reorganizing fast5 according to Guppy demultiplexing output...')
         Demul.move_fast5(fast5_dict, fastq_dict, self.single_fast5_folder, self.demultimplexed_folder)
+
         print('Converting single fast5 to multi fast5...')
         Demul.single_to_multi_fast5_loop(fastq_dict, self.demultimplexed_folder,
                                          self.demultimplexed_folder + '_multi', self.threads)
-        print('Removing temporary folders')
+
+        # Removing temporary folders with single demultiplexed fast5
+        print('Deleting temporary files...')
+        Demul.delete_folder(self.demultimplexed_folder)
+
+        # Rename
+        print('Renaming folder...')
+        os.rename(self.demultimplexed_folder + '_multi', self.demultimplexed_folder)
+
+        print('Done!')
 
     @staticmethod
     def get_fast5_tree(single_fasta5_folder):
@@ -61,13 +77,16 @@ class Demul(object):
                     status = path_list[-3]  # pass or fail
                     barcode = path_list[-2]  # barcode01, ..., unclassified
 
-                    read_list = Demul.extract_read_names(absolute_path)
+                    name_list = Demul.extract_read_names(absolute_path)
 
                     if status not in fastq_dict:
                         fastq_dict[status] = dict()
-                        fastq_dict[status][barcode] = read_list
+                        fastq_dict[status][barcode] = name_list
                     elif barcode not in fastq_dict[status]:
-                        fastq_dict[status][barcode] = read_list
+                        fastq_dict[status][barcode] = name_list
+                    else:
+                        fastq_dict[status][barcode] += name_list
+                        pass
 
         return fastq_dict
 
@@ -87,19 +106,27 @@ class Demul(object):
         return name_list
 
     @staticmethod
+    def extract_read_names_parallel(fastq_list, n_cpu):
+        pass
+
+    @staticmethod
     def make_folders(folder):
         Path(folder).mkdir(parents=True, exist_ok=True)
 
     @staticmethod
+    def delete_folder(folder):
+        shutil.rmtree(folder, ignore_errors=True)
+
+    @staticmethod
     def move_fast5(fast5_dict, fastq_dict, single_fasta5_folder, demultiplexed_fast5_folder):
-        # Maker folders
-        for status, info_dict in fastq_dict.items():
-            for barcode, name_list in info_dict.items():
+        for status, barcode_dict in fastq_dict.items():
+            for barcode, name_list in barcode_dict.items():
                 Demul.make_folders(os.path.join(demultiplexed_fast5_folder, status, barcode))
                 for name in name_list:
-                    source = fast5_dict[name]
-                    destination = os.path.join(demultiplexed_fast5_folder, status, barcode, name + '.fast5')
-                    shutil.move(source, destination)
+                    source = fast5_dict[name]  # All fastq shoul have a corresponding fast5
+                    destination_folder = os.path.join(demultiplexed_fast5_folder, status, barcode)
+                    # Move file to new folder
+                    shutil.move(source, destination_folder)
 
     @staticmethod
     def multi_to_single_fast5(input_fast5_folder, output_fast5_folder, n_cpu):
