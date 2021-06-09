@@ -5,12 +5,12 @@ from multiprocessing import cpu_count
 from pathlib import Path
 import shutil
 import gzip
-# from collections import defaultdict
-# from concurrent import futures
+from concurrent import futures
 
-# TODO: start with the multi fast5 folder from MinKNOW. Add function to convert multi to single.
-# TODO: list reads names form files in parallel
-# TODO: convert demultiplexed fast5 from single to multi in parallel
+
+# TODO: start with the multi fast5 folder from MinKNOW. Add function to convert multi to single. ?
+# TODO: convert demultiplexed fast5 from single to multi in parallel ?
+
 
 __author__ = 'duceppemo'
 __version__ = '0.1'
@@ -33,11 +33,11 @@ class Demul(object):
         print(' found {}.'.format(len(fast5_dict.keys())))
 
         print('Listing demultiplexed fastq reads...', end="", flush=True)
-        fastq_dict = Demul.get_fastq_tree(self.basecalled_folder)
+        fastq_dict = Demul.get_fastq_tree(self.basecalled_folder, self.threads)
         n_fastq = sum([len(name_list) for status, bc_dict in fastq_dict.items() for bc, name_list in bc_dict.items()])
         print(' found {}.'.format(n_fastq))
 
-        print('Reorganizing fast5 according to Guppy demultiplexing output...')
+        print('Organizing fast5 according to Guppy demultiplexing output...')
         Demul.move_fast5(fast5_dict, fastq_dict, self.single_fast5_folder, self.demultimplexed_folder)
 
         print('Converting single fast5 to multi fast5...')
@@ -47,6 +47,7 @@ class Demul(object):
         # Removing temporary folders with single demultiplexed fast5
         print('Deleting temporary files...')
         Demul.delete_folder(self.demultimplexed_folder)
+        Demul.delete_folder(self.single_fast5_folder)
 
         # Rename
         print('Renaming folder...')
@@ -66,27 +67,26 @@ class Demul(object):
         return fast5_dict
 
     @staticmethod
-    def get_fastq_tree(basecalled_folder):
+    def get_fastq_tree(basecalled_folder, n_cpu):
         fastq_dict = dict()
 
         for root, dirs, files in os.walk(basecalled_folder):
-            for name in files:
-                if name.endswith(('.fastq', '.fastq.gz')):
-                    absolute_path = os.path.join(root, name)
-                    path_list = absolute_path.split('/')
-                    status = path_list[-3]  # pass or fail
-                    barcode = path_list[-2]  # barcode01, ..., unclassified
+            fastq_list = [os.path.join(root, f) for f in files if f.endswith(('.fastq', '.fastq.gz'))]
+            if not fastq_list:
+                continue
+            info = fastq_list[0].split('/')
+            status = info[9]
+            barcode = info[10]
+            name_list = Demul.extract_read_names_parallel(fastq_list, n_cpu)
 
-                    name_list = Demul.extract_read_names(absolute_path)
-
-                    if status not in fastq_dict:
-                        fastq_dict[status] = dict()
-                        fastq_dict[status][barcode] = name_list
-                    elif barcode not in fastq_dict[status]:
-                        fastq_dict[status][barcode] = name_list
-                    else:
-                        fastq_dict[status][barcode] += name_list
-                        pass
+            if status not in fastq_dict:
+                fastq_dict[status] = dict()
+                fastq_dict[status][barcode] = name_list
+            elif barcode not in fastq_dict[status]:
+                fastq_dict[status][barcode] = name_list
+            else:
+                fastq_dict[status][barcode] += name_list
+                pass
 
         return fastq_dict
 
@@ -107,7 +107,15 @@ class Demul(object):
 
     @staticmethod
     def extract_read_names_parallel(fastq_list, n_cpu):
-        pass
+        with futures.ProcessPoolExecutor(max_workers=cpu) as pool:
+            results = pool.map(Demul.extract_read_names, fastq_list)
+
+        # Update dictionary with results from every chunk
+        name_list = list()
+        for name in results:  # results is a list of lists
+            name_list += name
+
+        return name_list
 
     @staticmethod
     def make_folders(folder):
@@ -123,7 +131,7 @@ class Demul(object):
             for barcode, name_list in barcode_dict.items():
                 Demul.make_folders(os.path.join(demultiplexed_fast5_folder, status, barcode))
                 for name in name_list:
-                    source = fast5_dict[name]  # All fastq shoul have a corresponding fast5
+                    source = fast5_dict[name]  # All fastq should have a corresponding fast5
                     destination_folder = os.path.join(demultiplexed_fast5_folder, status, barcode)
                     # Move file to new folder
                     shutil.move(source, destination_folder)
@@ -151,6 +159,7 @@ class Demul(object):
                                    multi_fast5_demultuplexed_folder, n_cpu):
         for status, info_dict in fastq_dict.items():
             for barcode, name_list in info_dict.items():
+                print('Converting to multi fast5 {}/{}'.format(status, barcode))
                 Demul.make_folders(os.path.join(multi_fast5_demultuplexed_folder, status, barcode))
                 Demul.single_to_multi_fast5(os.path.join(single_fast5_demultuplexed_folder, status, barcode),
                                             os.path.join(multi_fast5_demultuplexed_folder, status, barcode),
