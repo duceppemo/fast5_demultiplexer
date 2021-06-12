@@ -75,8 +75,8 @@ class Demul(object):
             if not fastq_list:
                 continue
             info = fastq_list[0].split('/')
-            status = info[9]
-            barcode = info[10]
+            status = info[-3]
+            barcode = info[-2]
             name_list = Demul.extract_read_names_parallel(fastq_list, n_cpu)
 
             if status not in fastq_dict:
